@@ -21,8 +21,11 @@ var (
 )
 
 func init() {
+	//使用默认模板创建项目
 	rootCmd.AddCommand(project.CmdNew)
+	//proto 模板生成，http,rpc等接口代码生成
 	rootCmd.AddCommand(proto.CmdProto)
+	//自动升级
 	rootCmd.AddCommand(upgrade.CmdUpgrade)
 }
 
