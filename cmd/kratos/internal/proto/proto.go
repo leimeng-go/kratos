@@ -17,7 +17,9 @@ var CmdProto = &cobra.Command{
 }
 
 func init() {
+	//添加使用默认的proto模板创建proto文件
 	CmdProto.AddCommand(add.CmdAdd)
+	//添加根据proto创建的
 	CmdProto.AddCommand(client.CmdClient)
 	CmdProto.AddCommand(server.CmdServer)
 }

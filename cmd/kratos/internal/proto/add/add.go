@@ -18,19 +18,28 @@ var CmdAdd = &cobra.Command{
 }
 
 func run(cmd *cobra.Command, args []string) {
-	// kratos add helloworld/v1/helloworld.proto
+	// kratos add api/user/v1/user.proto
 	input := args[0]
 	n := strings.LastIndex(input, "/")
+	// api/user/v1
 	path := input[:n]
+	// user.proto
 	fileName := input[n+1:]
+	// api.user.v1
 	pkgName := strings.ReplaceAll(path, "/", ".")
 
 	p := &Proto{
+		// user.proto
 		Name:        fileName,
+		// api/user/v1
 		Path:        path,
+		// api.user
 		Package:     pkgName,
+		// helloworld/api/user/v1;v1
 		GoPackage:   goPackage(path),
+		// api/user/v1
 		JavaPackage: javaPackage(pkgName),
+		// user
 		Service:     serviceName(fileName),
 	}
 	if err := p.Generate(); err != nil {
