@@ -51,7 +51,7 @@ func populateFieldValues(v protoreflect.Message, fieldPath []string, values []st
 		if fd = fields.ByName(protoreflect.Name(fieldName)); fd == nil {
 			fd = fields.ByJSONName(fieldName)
 			if fd == nil {
-				log.Printf("field not found in %q: %q\n", v.Descriptor().FullName(), strings.Join(fieldPath, "."))
+				log.Printf( "field not found in %q: %q\n", v.Descriptor().FullName(), strings.Join(fieldPath, "."))
 				return nil
 			}
 		}

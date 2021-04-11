@@ -65,5 +65,6 @@ func testClient(t *testing.T, srv *Server) {
 		if res.Path != test.path {
 			t.Errorf("expected %s got %s", test.path, res.Path)
 		}
+		t.Log(res)
 	}
 }

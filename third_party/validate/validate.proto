@@ -1,4 +1,4 @@
-syntax = "proto2";
+ syntax = "proto2";
 package validate;
 
 option go_package = "github.com/envoyproxy/protoc-gen-validate/validate";

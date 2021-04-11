@@ -72,7 +72,7 @@ func walk(dir string) error {
 }
 
 // generate is used to execute the generate command for the specified proto file
-func generate(proto string) error {
+func  generate(proto string) error {
 	path, name := filepath.Split(proto)
 	fd := exec.Command("protoc", []string{
 		"--proto_path=.",

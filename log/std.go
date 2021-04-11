@@ -12,7 +12,7 @@ var _ Logger = (*stdLogger)(nil)
 
 type stdLogger struct {
 	log  *log.Logger
-	pool *sync.Pool
+	pool *sync.Pool 
 }
 
 // NewStdLogger new a std logger with options.

@@ -21,7 +21,7 @@ const (
 
 var (
 	acceptHeader      = http.CanonicalHeaderKey("Accept")
-	contentTypeHeader = http.CanonicalHeaderKey("Content-Type")
+	 contentTypeHeader = http.CanonicalHeaderKey("Content-Type")
 )
 
 // DecodeRequestFunc is decode request func.

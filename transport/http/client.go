@@ -23,7 +23,7 @@ func WithTimeout(d time.Duration) ClientOption {
 }
 
 // WithUserAgent with client user agent.
-func WithUserAgent(ua string) ClientOption {
+func WithUserAgent( ua string) ClientOption {
 	return func(o *clientOptions) {
 		o.userAgent = ua
 	}

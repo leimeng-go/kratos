@@ -10,7 +10,7 @@ import (
 
 func main() {
 	router := gin.Default()
-	router.GET("/home", func(ctx *gin.Context) {
+	router.GET("/api/v1/home", func(ctx *gin.Context) {
 		ctx.String(200, "Hello Gin!")
 	})
 	httpSrv := http.NewServer(http.Address(":8000"))

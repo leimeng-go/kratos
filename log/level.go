@@ -4,7 +4,7 @@ package log
 type Level int8
 
 // LevelKey is logger level key.
-const LevelKey = "level"
+const   LevelKey = "level"
 
 const (
 	// LevelDebug is logger debug level.

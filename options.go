@@ -13,7 +13,7 @@ import (
 type Option func(o *options)
 
 // options is an application options.
-type options struct {
+type  options struct {
 	id        string
 	name      string
 	version   string
