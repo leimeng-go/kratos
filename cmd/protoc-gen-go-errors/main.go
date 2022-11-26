@@ -8,18 +8,15 @@ import (
 	"google.golang.org/protobuf/types/pluginpb"
 )
 
-const version = "v2.0.0-beta2"
+var showVersion = flag.Bool("version", false, "print the version and exit")
 
 func main() {
-	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
 	if *showVersion {
-		fmt.Printf("protoc-gen-go-errors %v\n", version)
+		fmt.Printf("protoc-gen-go-errors %v\n", release)
 		return
 	}
-
 	var flags flag.FlagSet
-
 	protogen.Options{
 		ParamFunc: flags.Set,
 	}.Run(func(gen *protogen.Plugin) error {

@@ -20,12 +20,12 @@ type Discovery interface {
 
 // Watcher is service watcher.
 type Watcher interface {
-	// Watch returns services in the following two cases:
+	// Next returns services in the following two cases:
 	// 1.the first time to watch and the service instance list is not empty.
 	// 2.any service instance changes found.
 	// if the above two conditions are not met, it will block until context deadline exceeded or canceled
 	Next() ([]*ServiceInstance, error)
-	// Close close the watcher.
+	// Stop close the watcher.
 	Stop() error
 }
 
@@ -39,7 +39,7 @@ type ServiceInstance struct {
 	Version string `json:"version"`
 	// Metadata is the kv pair metadata associated with the service instance.
 	Metadata map[string]string `json:"metadata"`
-	// Endpoints is endpoint addresses of the service instance.
+	// Endpoints are endpoint addresses of the service instance.
 	// schema:
 	//   http://127.0.0.1:8000?isSecure=false
 	//   grpc://127.0.0.1:9000?isSecure=false

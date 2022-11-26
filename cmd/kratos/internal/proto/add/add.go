@@ -2,26 +2,31 @@ package add
 
 import (
 	"fmt"
-	"io/ioutil"
+	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/mod/modfile"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 )
 
 // CmdAdd represents the add command.
 var CmdAdd = &cobra.Command{
 	Use:   "add",
 	Short: "Add a proto API template",
-	Long:  "Add a proto API template. Example: kratos add helloworld/v1/hello.proto",
+	Long:  "Add a proto API template. Example: kratos proto add helloworld/v1/hello.proto",
 	Run:   run,
 }
 
 func run(cmd *cobra.Command, args []string) {
-	// kratos add api/user/v1/user.proto
+	// kratos proto add helloworld/v1/helloworld.proto
 	input := args[0]
 	n := strings.LastIndex(input, "/")
-	// api/user/v1
+	if n == -1 {
+		fmt.Println("The proto path needs to be hierarchical.")
+		return
+	}
 	path := input[:n]
 	// user.proto
 	fileName := input[n+1:]
@@ -30,17 +35,17 @@ func run(cmd *cobra.Command, args []string) {
 
 	p := &Proto{
 		// user.proto
-		Name:        fileName,
+		Name: fileName,
 		// api/user/v1
-		Path:        path,
+		Path: path,
 		// api.user
-		Package:     pkgName,
+		Package: pkgName,
 		// helloworld/api/user/v1;v1
-		GoPackage:   goPackage(path),
+		GoPackage: goPackage(path),
 		// api/user/v1
 		JavaPackage: javaPackage(pkgName),
 		// user
-		Service:     serviceName(fileName),
+		Service: serviceName(fileName),
 	}
 	if err := p.Generate(); err != nil {
 		fmt.Println(err)
@@ -49,9 +54,9 @@ func run(cmd *cobra.Command, args []string) {
 }
 
 func modName() string {
-	modBytes, err := ioutil.ReadFile("go.mod")
+	modBytes, err := os.ReadFile("go.mod")
 	if err != nil {
-		if modBytes, err = ioutil.ReadFile("../go.mod"); err != nil {
+		if modBytes, err = os.ReadFile("../go.mod"); err != nil {
 			return ""
 		}
 	}
@@ -68,7 +73,11 @@ func javaPackage(name string) string {
 }
 
 func serviceName(name string) string {
-	return unexport(strings.Split(name, ".")[0])
+	return toUpperCamelCase(strings.Split(name, ".")[0])
 }
 
-func unexport(s string) string { return strings.ToUpper(s[:1]) + s[1:] }
+func toUpperCamelCase(s string) string {
+	s = strings.ReplaceAll(s, "_", " ")
+	s = cases.Title(language.Und, cases.NoLower).String(s)
+	return strings.ReplaceAll(s, " ", "")
+}

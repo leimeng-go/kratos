@@ -1,16 +1,23 @@
 package file
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 
 	"github.com/fsnotify/fsnotify"
+
 	"github.com/go-kratos/kratos/v2/config"
 )
+
+var _ config.Watcher = (*watcher)(nil)
 
 type watcher struct {
 	f  *file
 	fw *fsnotify.Watcher
+
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 func newWatcher(f *file) (config.Watcher, error) {
@@ -18,16 +25,23 @@ func newWatcher(f *file) (config.Watcher, error) {
 	if err != nil {
 		return nil, err
 	}
-	fw.Add(f.path)
-	return &watcher{f: f, fw: fw}, nil
+	if err := fw.Add(f.path); err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	return &watcher{f: f, fw: fw, ctx: ctx, cancel: cancel}, nil
 }
 
 func (w *watcher) Next() ([]*config.KeyValue, error) {
 	select {
+	case <-w.ctx.Done():
+		return nil, w.ctx.Err()
 	case event := <-w.fw.Events:
 		if event.Op == fsnotify.Rename {
 			if _, err := os.Stat(event.Name); err == nil || os.IsExist(err) {
-				w.fw.Add(event.Name)
+				if err := w.fw.Add(event.Name); err != nil {
+					return nil, err
+				}
 			}
 		}
 		fi, err := os.Stat(w.f.path)
@@ -36,7 +50,7 @@ func (w *watcher) Next() ([]*config.KeyValue, error) {
 		}
 		path := w.f.path
 		if fi.IsDir() {
-			path = filepath.Join(w.f.path, event.Name)
+			path = filepath.Join(w.f.path, filepath.Base(event.Name))
 		}
 		kv, err := w.f.loadFile(path)
 		if err != nil {
@@ -49,5 +63,6 @@ func (w *watcher) Next() ([]*config.KeyValue, error) {
 }
 
 func (w *watcher) Stop() error {
+	w.cancel()
 	return w.fw.Close()
 }

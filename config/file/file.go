@@ -1,7 +1,7 @@
 package file
 
 import (
-	"io/ioutil"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,7 +26,7 @@ func (f *file) loadFile(path string) (*config.KeyValue, error) {
 		return nil, err
 	}
 	defer file.Close()
-	data, err := ioutil.ReadAll(file)
+	data, err := io.ReadAll(file)
 	if err != nil {
 		return nil, err
 	}
@@ -35,13 +35,14 @@ func (f *file) loadFile(path string) (*config.KeyValue, error) {
 		return nil, err
 	}
 	return &config.KeyValue{
-		Key:   info.Name(),
-		Value: data,
+		Key:    info.Name(),
+		Format: format(info.Name()),
+		Value:  data,
 	}, nil
 }
 
 func (f *file) loadDir(path string) (kvs []*config.KeyValue, err error) {
-	files, err := ioutil.ReadDir(f.path)
+	files, err := os.ReadDir(path)
 	if err != nil {
 		return nil, err
 	}
@@ -50,7 +51,7 @@ func (f *file) loadDir(path string) (kvs []*config.KeyValue, err error) {
 		if file.IsDir() || strings.HasPrefix(file.Name(), ".") {
 			continue
 		}
-		kv, err := f.loadFile(filepath.Join(f.path, file.Name()))
+		kv, err := f.loadFile(filepath.Join(path, file.Name()))
 		if err != nil {
 			return nil, err
 		}

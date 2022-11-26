@@ -13,7 +13,6 @@ var CmdProto = &cobra.Command{
 	Use:   "proto",
 	Short: "Generate the proto files",
 	Long:  "Generate the proto files.",
-	Run:   run,
 }
 
 func init() {
@@ -22,8 +21,4 @@ func init() {
 	//添加根据proto创建的
 	CmdProto.AddCommand(client.CmdClient)
 	CmdProto.AddCommand(server.CmdServer)
-}
-
-func run(cmd *cobra.Command, args []string) {
-
 }

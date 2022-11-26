@@ -7,50 +7,96 @@ import (
 )
 
 var httpTemplate = `
-type {{.ServiceType}}Handler interface {
-{{range .MethodSets}}
+{{$svrType := .ServiceType}}
+{{$svrName := .ServiceName}}
+
+{{- range .MethodSets}}
+const Operation{{$svrType}}{{.OriginalName}} = "/{{$svrName}}/{{.OriginalName}}"
+{{- end}}
+
+type {{.ServiceType}}HTTPServer interface {
+{{- range .MethodSets}}
 	{{.Name}}(context.Context, *{{.Request}}) (*{{.Reply}}, error)
-{{end}}
+{{- end}}
 }
 
-func New{{.ServiceType}}Handler(srv {{.ServiceType}}Handler, opts ...http1.HandleOption) http.Handler {
-	h := http1.DefaultHandleOptions()
-	for _, o := range opts {
-		o(&h)
-	}
-	r := mux.NewRouter()
-	{{range .Methods}}
-	r.HandleFunc("{{.Path}}", func(w http.ResponseWriter, r *http.Request) {
+func Register{{.ServiceType}}HTTPServer(s *http.Server, srv {{.ServiceType}}HTTPServer) {
+	r := s.Route("/")
+	{{- range .Methods}}
+	r.{{.Method}}("{{.Path}}", _{{$svrType}}_{{.Name}}{{.Num}}_HTTP_Handler(srv))
+	{{- end}}
+}
+
+{{range .Methods}}
+func _{{$svrType}}_{{.Name}}{{.Num}}_HTTP_Handler(srv {{$svrType}}HTTPServer) func(ctx http.Context) error {
+	return func(ctx http.Context) error {
 		var in {{.Request}}
-		if err := h.Decode(r, &in{{.Body}}); err != nil {
-			h.Error(w, r, err)
-			return
+		{{- if .HasBody}}
+		if err := ctx.Bind(&in{{.Body}}); err != nil {
+			return err
 		}
-		{{if ne (len .Vars) 0}}
-		if err := binding.MapProto(&in, mux.Vars(r)); err != nil {
-			h.Error(w, r, err)
-			return
+		
+		{{- if not (eq .Body "")}}
+		if err := ctx.BindQuery(&in); err != nil {
+			return err
 		}
-		{{end}}
-		next := func(ctx context.Context, req interface{}) (interface{}, error) {
+		{{- end}}
+		{{- else}}
+		if err := ctx.BindQuery(&in{{.Body}}); err != nil {
+			return err
+		}
+		{{- end}}
+		{{- if .HasVars}}
+		if err := ctx.BindVars(&in); err != nil {
+			return err
+		}
+		{{- end}}
+		http.SetOperation(ctx,Operation{{$svrType}}{{.OriginalName}})
+		h := ctx.Middleware(func(ctx context.Context, req interface{}) (interface{}, error) {
 			return srv.{{.Name}}(ctx, req.(*{{.Request}}))
-		}
-		if h.Middleware != nil {
-			next = h.Middleware(next)
-		}
-		out, err := next(r.Context(), &in)
+		})
+		out, err := h(ctx, &in)
 		if err != nil {
-			h.Error(w, r, err)
-			return
+			return err
 		}
 		reply := out.(*{{.Reply}})
-		if err := h.Encode(w, r, reply{{.ResponseBody}}); err != nil {
-			h.Error(w, r, err)
-		}
-	}).Methods("{{.Method}}")
-	{{end}}
-	return r
+		return ctx.Result(200, reply{{.ResponseBody}})
+	}
 }
+{{end}}
+
+type {{.ServiceType}}HTTPClient interface {
+{{- range .MethodSets}}
+	{{.Name}}(ctx context.Context, req *{{.Request}}, opts ...http.CallOption) (rsp *{{.Reply}}, err error) 
+{{- end}}
+}
+	
+type {{.ServiceType}}HTTPClientImpl struct{
+	cc *http.Client
+}
+	
+func New{{.ServiceType}}HTTPClient (client *http.Client) {{.ServiceType}}HTTPClient {
+	return &{{.ServiceType}}HTTPClientImpl{client}
+}
+
+{{range .MethodSets}}
+func (c *{{$svrType}}HTTPClientImpl) {{.Name}}(ctx context.Context, in *{{.Request}}, opts ...http.CallOption) (*{{.Reply}}, error) {
+	var out {{.Reply}}
+	pattern := "{{.Path}}"
+	path := binding.EncodeURL(pattern, in, {{not .HasBody}})
+	opts = append(opts, http.Operation(Operation{{$svrType}}{{.OriginalName}}))
+	opts = append(opts, http.PathTemplate(pattern))
+	{{if .HasBody -}}
+	err := c.cc.Invoke(ctx, "{{.Method}}", path, in{{.Body}}, &out{{.ResponseBody}}, opts...)
+	{{else -}} 
+	err := c.cc.Invoke(ctx, "{{.Method}}", path, nil, &out{{.ResponseBody}}, opts...)
+	{{end -}}
+	if err != nil {
+		return nil, err
+	}
+	return &out, err
+}
+{{end}}
 `
 
 type serviceDesc struct {
@@ -63,15 +109,16 @@ type serviceDesc struct {
 
 type methodDesc struct {
 	// method
-	Name    string
-	Num     int
-	Vars    []string
-	Forms   []string
-	Request string
-	Reply   string
+	Name         string
+	OriginalName string // The parsed original name
+	Num          int
+	Request      string
+	Reply        string
 	// http_rule
 	Path         string
 	Method       string
+	HasVars      bool
+	HasBody      bool
 	Body         string
 	ResponseBody string
 }
@@ -89,5 +136,5 @@ func (s *serviceDesc) execute() string {
 	if err := tmpl.Execute(buf, s); err != nil {
 		panic(err)
 	}
-	return string(buf.Bytes())
+	return strings.Trim(buf.String(), "\r\n")
 }

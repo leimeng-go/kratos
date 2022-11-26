@@ -8,12 +8,12 @@ This document defines the roadmap for Kratos development.
     - [x] K8s ConfigMap
     - [x] Consul
     - [x] Etcd
-    - [ ] Nacos
-- [ ] Registry
-    - [ ] Consul
-    - [ ] Etcd
-    - [ ] K8s
-    - [ ] Nacos
+    - [x] Nacos
+- [x] Registry
+    - [x] Consul
+    - [x] Etcd
+    - [x] K8s
+    - [x] Nacos
 - [x] Encoding
     - [x] JSON
     - [x] Protobuf
@@ -27,30 +27,30 @@ This document defines the roadmap for Kratos development.
     - [x] gRPC status
     - [x] transport tracing
     - [x] Validator
-    - [ ] Authentication
-    - [ ] Ratelimit
-    - [ ] CircuitBreaker
+    - [x] Authentication
+    - [x] Ratelimit
+    - [x] CircuitBreaker
 - [x] Metrics
     - [x] Prometheus
     - [x] DataDog
 - [x] Tracing
     - [x] HTTP
-        - [ ] TLS
+        - [x] TLS
         - [x] Client
         - [x] Service Registrar
         - [ ] javascript/typescript clients
     - [x] gRPC
-        - [ ] TLS
+        - [x] TLS
         - [x] Uarry Handler
-        - [ ] Streaming Handler
+        - [x] Streaming Handler
 - [ ] Cache
     - [ ] go-redis
 - [x] Event
     - [x] Pub/Sub
     - [x] Kafka
     - [ ] Nats
-- [ ] Database
-    - [ ] Ent
+- [x] Database
+    - [x] Ent
     - [ ] Gorm
 
 ## Platform

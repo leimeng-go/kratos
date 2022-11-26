@@ -3,114 +3,150 @@ package errors
 import (
 	"errors"
 	"fmt"
-	"net/http"
+
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
+	"google.golang.org/grpc/status"
+
+	httpstatus "github.com/go-kratos/kratos/v2/transport/http/status"
 )
 
 const (
+	// UnknownCode is unknown code for error info.
+	UnknownCode = 500
 	// UnknownReason is unknown reason for error info.
 	UnknownReason = ""
 	// SupportPackageIsVersion1 this constant should not be referenced by any other code.
 	SupportPackageIsVersion1 = true
 )
 
-var _ error = (*StatusError)(nil)
+// Error is a status error.
+type Error struct {
+	Status
+	cause error
+}
 
-// StatusError contains an error response from the server.
-type StatusError = Status
+func (e *Error) Error() string {
+	return fmt.Sprintf("error: code = %d reason = %s message = %s metadata = %v cause = %v", e.Code, e.Reason, e.Message, e.Metadata, e.cause)
+}
+
+// Unwrap provides compatibility for Go 1.13 error chains.
+func (e *Error) Unwrap() error { return e.cause }
 
 // Is matches each error in the chain with the target value.
-func (e *StatusError) Is(target error) bool {
-	err, ok := target.(*StatusError)
-	if ok {
-		return e.Code == err.Code
+func (e *Error) Is(err error) bool {
+	if se := new(Error); errors.As(err, &se) {
+		return se.Code == e.Code && se.Reason == e.Reason
 	}
 	return false
 }
 
-// HTTPStatus returns the Status represented by se.
-func (e *StatusError) HTTPStatus() int {
-	switch e.Code {
-	case 0:
-		return http.StatusOK
-	case 1:
-		return http.StatusInternalServerError
-	case 2:
-		return http.StatusInternalServerError
-	case 3:
-		return http.StatusBadRequest
-	case 4:
-		return http.StatusRequestTimeout
-	case 5:
-		return http.StatusNotFound
-	case 6:
-		return http.StatusConflict
-	case 7:
-		return http.StatusForbidden
-	case 8:
-		return http.StatusTooManyRequests
-	case 9:
-		return http.StatusPreconditionFailed
-	case 10:
-		return http.StatusConflict
-	case 11:
-		return http.StatusBadRequest
-	case 12:
-		return http.StatusNotImplemented
-	case 13:
-		return http.StatusInternalServerError
-	case 14:
-		return http.StatusServiceUnavailable
-	case 15:
-		return http.StatusInternalServerError
-	case 16:
-		return http.StatusUnauthorized
-	default:
-		return http.StatusInternalServerError
+// WithCause with the underlying cause of the error.
+func (e *Error) WithCause(cause error) *Error {
+	err := Clone(e)
+	err.cause = cause
+	return err
+}
+
+// WithMetadata with an MD formed by the mapping of key, value.
+func (e *Error) WithMetadata(md map[string]string) *Error {
+	err := Clone(e)
+	err.Metadata = md
+	return err
+}
+
+// GRPCStatus returns the Status represented by se.
+func (e *Error) GRPCStatus() *status.Status {
+	s, _ := status.New(httpstatus.ToGRPCCode(int(e.Code)), e.Message).
+		WithDetails(&errdetails.ErrorInfo{
+			Reason:   e.Reason,
+			Metadata: e.Metadata,
+		})
+	return s
+}
+
+// New returns an error object for the code, message.
+func New(code int, reason, message string) *Error {
+	return &Error{
+		Status: Status{
+			Code:    int32(code),
+			Message: message,
+			Reason:  reason,
+		},
 	}
 }
 
-func (e *StatusError) Error() string {
-	return fmt.Sprintf("error: code = %d reason = %s message = %s details = %+v", e.Code, e.Reason, e.Message, e.Details)
+// Newf New(code fmt.Sprintf(format, a...))
+func Newf(code int, reason, format string, a ...interface{}) *Error {
+	return New(code, reason, fmt.Sprintf(format, a...))
 }
 
-// Error returns a Status representing c and msg.
-func Error(code int32, reason, message string) error {
-	return &StatusError{
-		Code:    code,
-		Reason:  reason,
-		Message: message,
-	}
+// Errorf returns an error object for the code, message and error info.
+func Errorf(code int, reason, format string, a ...interface{}) error {
+	return New(code, reason, fmt.Sprintf(format, a...))
 }
 
-// Errorf returns New(c, fmt.Sprintf(format, a...)).
-func Errorf(code int32, reason, format string, a ...interface{}) error {
-	return Error(code, reason, fmt.Sprintf(format, a...))
-}
-
-// Code returns the status code.
-func Code(err error) int32 {
+// Code returns the http code for an error.
+// It supports wrapped errors.
+func Code(err error) int {
 	if err == nil {
-		return 0 // ok
+		return 200 //nolint:gomnd
 	}
-	if se := new(StatusError); errors.As(err, &se) {
-		return se.Code
-	}
-	return 2 // unknown
+	return int(FromError(err).Code)
 }
 
-// Reason returns the status for a particular error.
+// Reason returns the reason for a particular error.
 // It supports wrapped errors.
 func Reason(err error) string {
-	if se := new(StatusError); errors.As(err, &se) {
-		return se.Reason
+	if err == nil {
+		return UnknownReason
 	}
-	return UnknownReason
+	return FromError(err).Reason
 }
 
-// FromError returns status error.
-func FromError(err error) (*StatusError, bool) {
-	if se := new(StatusError); errors.As(err, &se) {
-		return se, true
+// Clone deep clone error to a new error.
+func Clone(err *Error) *Error {
+	if err == nil {
+		return nil
 	}
-	return nil, false
+	metadata := make(map[string]string, len(err.Metadata))
+	for k, v := range err.Metadata {
+		metadata[k] = v
+	}
+	return &Error{
+		cause: err.cause,
+		Status: Status{
+			Code:     err.Code,
+			Reason:   err.Reason,
+			Message:  err.Message,
+			Metadata: metadata,
+		},
+	}
+}
+
+// FromError try to convert an error to *Error.
+// It supports wrapped errors.
+func FromError(err error) *Error {
+	if err == nil {
+		return nil
+	}
+	if se := new(Error); errors.As(err, &se) {
+		return se
+	}
+	gs, ok := status.FromError(err)
+	if !ok {
+		return New(UnknownCode, UnknownReason, err.Error())
+	}
+	ret := New(
+		httpstatus.FromGRPCCode(gs.Code()),
+		UnknownReason,
+		gs.Message(),
+	)
+	for _, detail := range gs.Details() {
+		switch d := detail.(type) {
+		case *errdetails.ErrorInfo:
+			ret.Reason = d.Reason
+			return ret.WithMetadata(d.Metadata)
+		}
+	}
+	return ret
 }

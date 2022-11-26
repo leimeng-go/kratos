@@ -3,132 +3,98 @@ package logging
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/go-kratos/kratos/v2/errors"
 	"github.com/go-kratos/kratos/v2/log"
 	"github.com/go-kratos/kratos/v2/middleware"
-	"github.com/go-kratos/kratos/v2/transport/grpc"
-	"github.com/go-kratos/kratos/v2/transport/http"
+	"github.com/go-kratos/kratos/v2/transport"
 )
 
-// Option is HTTP logging option.
-type Option func(*options)
-
-type options struct {
-	logger log.Logger
-}
-
-// WithLogger with middleware logger.
-func WithLogger(logger log.Logger) Option {
-	return func(o *options) {
-		o.logger = logger
-	}
-}
-
 // Server is an server logging middleware.
-func Server(opts ...Option) middleware.Middleware {
-	options := options{
-		logger: log.DefaultLogger,
-	}
-	for _, o := range opts {
-		o(&options)
-	}
-	logger := log.NewHelper("middleware/logging", options.logger)
+func Server(logger log.Logger) middleware.Middleware {
 	return func(handler middleware.Handler) middleware.Handler {
-		return func(ctx context.Context, req interface{}) (interface{}, error) {
+		return func(ctx context.Context, req interface{}) (reply interface{}, err error) {
 			var (
-				path      string
-				method    string
-				params    string
-				component string
+				code      int32
+				reason    string
+				kind      string
+				operation string
 			)
-			if info, ok := http.FromServerContext(ctx); ok {
-				component = "HTTP"
-				path = info.Request.RequestURI
-				method = info.Request.Method
-				params = info.Request.Form.Encode()
-			} else if info, ok := grpc.FromServerContext(ctx); ok {
-				component = "gRPC"
-				path = info.FullMethod
-				method = "POST"
-				params = req.(fmt.Stringer).String()
+			startTime := time.Now()
+			if info, ok := transport.FromServerContext(ctx); ok {
+				kind = info.Kind().String()
+				operation = info.Operation()
 			}
-			reply, err := handler(ctx, req)
-			if err != nil {
-				logger.Errorw(
-					"kind", "server",
-					"component", component,
-					"path", path,
-					"method", method,
-					"params", params,
-					"code", errors.Code(err),
-					"error", err.Error(),
-				)
-				return nil, err
+			reply, err = handler(ctx, req)
+			if se := errors.FromError(err); se != nil {
+				code = se.Code
+				reason = se.Reason
 			}
-			logger.Infow(
+			level, stack := extractError(err)
+			_ = log.WithContext(ctx, logger).Log(level,
 				"kind", "server",
-				"component", component,
-				"path", path,
-				"method", method,
-				"params", params,
-				"code", 0,
+				"component", kind,
+				"operation", operation,
+				"args", extractArgs(req),
+				"code", code,
+				"reason", reason,
+				"stack", stack,
+				"latency", time.Since(startTime).Seconds(),
 			)
-			return reply, nil
+			return
 		}
 	}
 }
 
-// Client is an client logging middleware.
-func Client(opts ...Option) middleware.Middleware {
-	options := options{
-		logger: log.DefaultLogger,
-	}
-	for _, o := range opts {
-		o(&options)
-	}
-	logger := log.NewHelper("middleware/logging", options.logger)
+// Client is a client logging middleware.
+func Client(logger log.Logger) middleware.Middleware {
 	return func(handler middleware.Handler) middleware.Handler {
-		return func(ctx context.Context, req interface{}) (interface{}, error) {
+		return func(ctx context.Context, req interface{}) (reply interface{}, err error) {
 			var (
-				path      string
-				method    string
-				params    string
-				component string
+				code      int32
+				reason    string
+				kind      string
+				operation string
 			)
-			if info, ok := http.FromClientContext(ctx); ok {
-				component = "HTTP"
-				path = info.Request.RequestURI
-				method = info.Request.Method
-				params = info.Request.Form.Encode()
-			} else if info, ok := grpc.FromClientContext(ctx); ok {
-				path = info.FullMethod
-				method = "POST"
-				component = "gRPC"
-				params = req.(fmt.Stringer).String()
+			startTime := time.Now()
+			if info, ok := transport.FromClientContext(ctx); ok {
+				kind = info.Kind().String()
+				operation = info.Operation()
 			}
-			reply, err := handler(ctx, req)
-			if err != nil {
-				logger.Errorw(
-					"kind", "client",
-					"component", component,
-					"path", path,
-					"method", method,
-					"params", params,
-					"code", errors.Code(err),
-					"error", err.Error(),
-				)
-				return nil, err
+			reply, err = handler(ctx, req)
+			if se := errors.FromError(err); se != nil {
+				code = se.Code
+				reason = se.Reason
 			}
-			logger.Infow(
+			level, stack := extractError(err)
+			_ = log.WithContext(ctx, logger).Log(level,
 				"kind", "client",
-				"component", component,
-				"path", path,
-				"method", method,
-				"params", params,
-				"code", 0,
+				"component", kind,
+				"operation", operation,
+				"args", extractArgs(req),
+				"code", code,
+				"reason", reason,
+				"stack", stack,
+				"latency", time.Since(startTime).Seconds(),
 			)
-			return reply, nil
+			return
 		}
 	}
+}
+
+// extractArgs returns the string of the req
+func extractArgs(req interface{}) string {
+	if stringer, ok := req.(fmt.Stringer); ok {
+		return stringer.String()
+	}
+	return fmt.Sprintf("%+v", req)
+}
+
+// extractError returns the string of the error
+func extractError(err error) (log.Level, string) {
+	if err != nil {
+		return log.LevelError, fmt.Sprintf("%+v", err)
+	}
+	return log.LevelInfo, ""
 }

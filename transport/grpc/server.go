@@ -2,23 +2,33 @@ package grpc
 
 import (
 	"context"
-	"fmt"
+	"crypto/tls"
 	"net"
+	"net/url"
 	"time"
+
+	"github.com/go-kratos/kratos/v2/internal/endpoint"
+	"github.com/go-kratos/kratos/v2/internal/matcher"
+
+	apimd "github.com/go-kratos/kratos/v2/api/metadata"
 
 	"github.com/go-kratos/kratos/v2/internal/host"
 	"github.com/go-kratos/kratos/v2/log"
 	"github.com/go-kratos/kratos/v2/middleware"
-	"github.com/go-kratos/kratos/v2/middleware/recovery"
-	"github.com/go-kratos/kratos/v2/middleware/status"
 	"github.com/go-kratos/kratos/v2/transport"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/health"
+	"google.golang.org/grpc/health/grpc_health_v1"
+
+	"google.golang.org/grpc/reflection"
 )
 
-const loggerName = "transport/grpc"
-
-var _ transport.Server = (*Server)(nil)
+var (
+	_ transport.Server     = (*Server)(nil)
+	_ transport.Endpointer = (*Server)(nil)
+)
 
 // ServerOption is gRPC server option.
 type ServerOption func(o *Server)
@@ -45,16 +55,43 @@ func Timeout(timeout time.Duration) ServerOption {
 }
 
 // Logger with server logger.
+// Deprecated: use global logger instead.
 func Logger(logger log.Logger) ServerOption {
-	return func(s *Server) {
-		s.log = log.NewHelper(loggerName, logger)
-	}
+	return func(s *Server) {}
 }
 
 // Middleware with server middleware.
-func Middleware(m middleware.Middleware) ServerOption {
+func Middleware(m ...middleware.Middleware) ServerOption {
 	return func(s *Server) {
-		s.middleware = m
+		s.middleware.Use(m...)
+	}
+}
+
+// TLSConfig with TLS config.
+func TLSConfig(c *tls.Config) ServerOption {
+	return func(s *Server) {
+		s.tlsConf = c
+	}
+}
+
+// Listener with server lis
+func Listener(lis net.Listener) ServerOption {
+	return func(s *Server) {
+		s.lis = lis
+	}
+}
+
+// UnaryInterceptor returns a ServerOption that sets the UnaryServerInterceptor for the server.
+func UnaryInterceptor(in ...grpc.UnaryServerInterceptor) ServerOption {
+	return func(s *Server) {
+		s.unaryInts = in
+	}
+}
+
+// StreamInterceptor returns a ServerOption that sets the StreamServerInterceptor for the server.
+func StreamInterceptor(in ...grpc.StreamServerInterceptor) ServerOption {
+	return func(s *Server) {
+		s.streamInts = in
 	}
 }
 
@@ -68,86 +105,121 @@ func Options(opts ...grpc.ServerOption) ServerOption {
 // Server is a gRPC server wrapper.
 type Server struct {
 	*grpc.Server
+	baseCtx    context.Context
+	tlsConf    *tls.Config
 	lis        net.Listener
+	err        error
 	network    string
 	address    string
+	endpoint   *url.URL
 	timeout    time.Duration
-	log        *log.Helper
-	middleware middleware.Middleware
+	middleware matcher.Matcher
+	unaryInts  []grpc.UnaryServerInterceptor
+	streamInts []grpc.StreamServerInterceptor
 	grpcOpts   []grpc.ServerOption
+	health     *health.Server
+	metadata   *apimd.Server
 }
 
 // NewServer creates a gRPC server by options.
 func NewServer(opts ...ServerOption) *Server {
 	srv := &Server{
-		network: "tcp",
-		address: ":0",
-		timeout: time.Second,
-		log:     log.NewHelper(loggerName, log.DefaultLogger),
-		middleware: middleware.Chain(
-			recovery.Recovery(),
-			status.Server(),
-		),
+		baseCtx:    context.Background(),
+		network:    "tcp",
+		address:    ":0",
+		timeout:    1 * time.Second,
+		health:     health.NewServer(),
+		middleware: matcher.New(),
 	}
 	for _, o := range opts {
 		o(srv)
 	}
-	var grpcOpts = []grpc.ServerOption{
-		grpc.ChainUnaryInterceptor(
-			unaryServerInterceptor(srv.middleware, srv.timeout),
-		),
+	unaryInts := []grpc.UnaryServerInterceptor{
+		srv.unaryServerInterceptor(),
+	}
+	streamInts := []grpc.StreamServerInterceptor{
+		srv.streamServerInterceptor(),
+	}
+	if len(srv.unaryInts) > 0 {
+		unaryInts = append(unaryInts, srv.unaryInts...)
+	}
+	if len(srv.streamInts) > 0 {
+		streamInts = append(streamInts, srv.streamInts...)
+	}
+	grpcOpts := []grpc.ServerOption{
+		grpc.ChainUnaryInterceptor(unaryInts...),
+		grpc.ChainStreamInterceptor(streamInts...),
+	}
+	if srv.tlsConf != nil {
+		grpcOpts = append(grpcOpts, grpc.Creds(credentials.NewTLS(srv.tlsConf)))
 	}
 	if len(srv.grpcOpts) > 0 {
 		grpcOpts = append(grpcOpts, srv.grpcOpts...)
 	}
 	srv.Server = grpc.NewServer(grpcOpts...)
+	srv.metadata = apimd.NewServer(srv.Server)
+	// internal register
+	grpc_health_v1.RegisterHealthServer(srv.Server, srv.health)
+	apimd.RegisterMetadataServer(srv.Server, srv.metadata)
+	reflection.Register(srv.Server)
 	return srv
+}
+
+// Use uses a service middleware with selector.
+// selector:
+//   - '/*'
+//   - '/helloworld.v1.Greeter/*'
+//   - '/helloworld.v1.Greeter/SayHello'
+func (s *Server) Use(selector string, m ...middleware.Middleware) {
+	s.middleware.Add(selector, m...)
 }
 
 // Endpoint return a real address to registry endpoint.
 // examples:
-//   grpc://127.0.0.1:9000?isSecure=false
-func (s *Server) Endpoint() (string, error) {
-	addr, err := host.Extract(s.address, s.lis)
-	if err != nil {
-		return "", err
+//
+//	grpc://127.0.0.1:9000?isSecure=false
+func (s *Server) Endpoint() (*url.URL, error) {
+	if err := s.listenAndEndpoint(); err != nil {
+		return nil, s.err
 	}
-	return fmt.Sprintf("grpc://%s", addr), nil
+	return s.endpoint, nil
 }
 
 // Start start the gRPC server.
-func (s *Server) Start() error {
-	lis, err := net.Listen(s.network, s.address)
-	if err != nil {
-		return err
+func (s *Server) Start(ctx context.Context) error {
+	if err := s.listenAndEndpoint(); err != nil {
+		return s.err
 	}
-	s.lis = lis
-	s.log.Infof("[gRPC] server listening on: %s", lis.Addr().String())
-	return s.Serve(lis)
+	s.baseCtx = ctx
+	log.Infof("[gRPC] server listening on: %s", s.lis.Addr().String())
+	s.health.Resume()
+	return s.Serve(s.lis)
 }
 
 // Stop stop the gRPC server.
-func (s *Server) Stop() error {
+func (s *Server) Stop(ctx context.Context) error {
+	s.health.Shutdown()
 	s.GracefulStop()
-	s.log.Info("[gRPC] server stopping")
+	log.Info("[gRPC] server stopping")
 	return nil
 }
 
-func unaryServerInterceptor(m middleware.Middleware, timeout time.Duration) grpc.UnaryServerInterceptor {
-	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
-		ctx = transport.NewContext(ctx, transport.Transport{Kind: transport.KindGRPC})
-		ctx = NewServerContext(ctx, ServerInfo{Server: info.Server, FullMethod: info.FullMethod})
-		if timeout > 0 {
-			var cancel context.CancelFunc
-			ctx, cancel = context.WithTimeout(ctx, timeout)
-			defer cancel()
+func (s *Server) listenAndEndpoint() error {
+	if s.lis == nil {
+		lis, err := net.Listen(s.network, s.address)
+		if err != nil {
+			s.err = err
+			return err
 		}
-		h := func(ctx context.Context, req interface{}) (interface{}, error) {
-			return handler(ctx, req)
-		}
-		if m != nil {
-			h = m(h)
-		}
-		return h(ctx, req)
+		s.lis = lis
 	}
+	if s.endpoint == nil {
+		addr, err := host.Extract(s.address, s.lis)
+		if err != nil {
+			s.err = err
+			return err
+		}
+		s.endpoint = endpoint.NewEndpoint(endpoint.Scheme("grpc", s.tlsConf != nil), addr)
+	}
+	return s.err
 }

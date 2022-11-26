@@ -15,10 +15,10 @@ type stdLogger struct {
 	pool *sync.Pool
 }
 
-// NewStdLogger new a std logger with options.
+// NewStdLogger new a logger with writer.
 func NewStdLogger(w io.Writer) Logger {
 	return &stdLogger{
-		log: log.New(w, "", log.LstdFlags),
+		log: log.New(w, "", 0),
 		pool: &sync.Pool{
 			New: func() interface{} {
 				return new(bytes.Buffer)
@@ -27,19 +27,25 @@ func NewStdLogger(w io.Writer) Logger {
 	}
 }
 
-// Print print the kv pairs log.
-func (l *stdLogger) Print(pairs ...interface{}) {
-	if len(pairs) == 0 {
-		return
+// Log print the kv pairs log.
+func (l *stdLogger) Log(level Level, keyvals ...interface{}) error {
+	if len(keyvals) == 0 {
+		return nil
 	}
-	if len(pairs)%2 != 0 {
-		pairs = append(pairs, "")
+	if (len(keyvals) & 1) == 1 {
+		keyvals = append(keyvals, "KEYVALS UNPAIRED")
 	}
 	buf := l.pool.Get().(*bytes.Buffer)
-	for i := 0; i < len(pairs); i += 2 {
-		fmt.Fprintf(buf, "%s=%v ", pairs[i], Value(pairs[i+1]))
+	buf.WriteString(level.String())
+	for i := 0; i < len(keyvals); i += 2 {
+		_, _ = fmt.Fprintf(buf, " %s=%v", keyvals[i], keyvals[i+1])
 	}
-	l.log.Output(4, buf.String())
+	_ = l.log.Output(4, buf.String()) //nolint:gomnd
 	buf.Reset()
 	l.pool.Put(buf)
+	return nil
+}
+
+func (l *stdLogger) Close() error {
+	return nil
 }
